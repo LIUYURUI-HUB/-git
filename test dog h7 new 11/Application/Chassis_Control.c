@@ -104,27 +104,27 @@ float Chassis_Get_Leg_Offset(uint8_t leg_index)
     if(leg_index < 4) return leg_y_offsets[leg_index];
     return 0.0f;
 }
-void state_zero_with_compensation(void)
-{
-    // 1. 因为是原地站立，四条腿都在地上，权重全设为最高 (1.0)
-    Chassis_Set_All_Leg_Weights(1.0f, 1.0f, 1.0f, 1.0f);
-
-    // 2. 期望姿态为绝对水平（Roll=0, Pitch=0）
-    Chassis_Set_Target_Attitude(0.0f, 0.0f);
-    float dt = 0.005f;
-    Chassis_Attitude_Loop(dt);
-
-    // 4. 将算出的补偿量叠加到默认站立高度上
-    // 注意：这里 default_y 的值需要替换为你机器狗正常的站立腿长(比如 120.0f 或 0.15f 等)
-    float default_x = 0.0f;
-    float default_y = 25.0f; // ★ 请务必改成你自己的零位 Y 坐标
-
-    // 5. 遍历四条腿，进行逆运动学解算并下发给电机
-    for(int i = 0; i < 4; i++) {
-        // 从底层获取 PID 算出来的单腿高度偏移量
-        float y_offset = Chassis_Get_Leg_Offset(i);
-
-        // 目标位置 = 基础站立位置 + 补偿量
-        float target_y = default_y + y_offset;
-      }
-}
+//void state_zero_with_compensation(void)
+//{
+//    // 1. 因为是原地站立，四条腿都在地上，权重全设为最高 (1.0)
+//    Chassis_Set_All_Leg_Weights(1.0f, 1.0f, 1.0f, 1.0f);
+//
+//    // 2. 期望姿态为绝对水平（Roll=0, Pitch=0）
+//    Chassis_Set_Target_Attitude(0.0f, 0.0f);
+//    float dt = 0.005f;
+//    Chassis_Attitude_Loop(dt);
+//
+//    // 4. 将算出的补偿量叠加到默认站立高度上
+//    // 注意：这里 default_y 的值需要替换为你机器狗正常的站立腿长(比如 120.0f 或 0.15f 等)
+//    float default_x = 0.0f;
+//    float default_y = 25.0f; // ★ 请务必改成你自己的零位 Y 坐标
+//
+//    // 5. 遍历四条腿，进行逆运动学解算并下发给电机
+//    for(int i = 0; i < 4; i++) {
+//        // 从底层获取 PID 算出来的单腿高度偏移量
+//        float y_offset = Chassis_Get_Leg_Offset(i);
+//
+//        // 目标位置 = 基础站立位置 + 补偿量
+//        float target_y = default_y + y_offset;
+//      }
+//}

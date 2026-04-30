@@ -26,44 +26,61 @@ void BMI088_com_init(void)
 /* ========== 毫秒延时 ========== */
 void BMI088_delay_ms(uint16_t ms)
 {
-    while(ms--)
-    {
-        BMI088_delay_us(1000);
-    }
+//    while(ms--)
+//    {
+//        BMI088_delay_us(1000);
+//    }
+	HAL_Delay(ms);
 }
 
-/* ========== 微秒延时（兼容 H7 主频） ========== */
+/* ========== 微秒延时 【已修复时钟频率】 ========== */
+//void BMI088_delay_us(uint16_t us)
+//{
+//    uint32_t ticks = 0;
+//    uint32_t told = 0;
+//    uint32_t tnow = 0;
+//    uint32_t tcnt = 0;
+//    uint32_t reload = 0;
+//
+//    reload = SysTick->LOAD;
+//    /* 【修复】使用 SystemCoreClock 自动计算，适配 400MHz */
+//    ticks = us * (SystemCoreClock / 1000000);
+//    told = SysTick->VAL;
+//
+//    while (1)
+//    {
+//        tnow = SysTick->VAL;
+//        if (tnow != told)
+//        {
+//            if (tnow < told)
+//            {
+//                tcnt += told - tnow;
+//            }
+//            else
+//            {
+//                tcnt += reload - tnow + told;
+//            }
+//            told = tnow;
+//            if (tcnt >= ticks)
+//            {
+//                break;
+//            }
+//        }
+//    }
+//}
+/* ========== 绝对不卡死的微秒延时 ========== */
 void BMI088_delay_us(uint16_t us)
 {
-    uint32_t ticks = 0;
-    uint32_t told = 0;
-    uint32_t tnow = 0;
-    uint32_t tcnt = 0;
-    uint32_t reload = 0;
+    // SystemCoreClock通常是主频(如400000000)，除以1000000得到1微秒的Tick数。
+    // 因为一个 while 循环加上自减操作大概需要 3~5 个时钟周期，这里保守除以 4。
+    uint32_t delay = (SystemCoreClock / 1000000 / 4) * us;
 
-    reload = SysTick->LOAD;
-    ticks = us * (SystemCoreClock / 1000000);
-    told = SysTick->VAL;
+    // 如果系统主频获取不到，给个保底值防止异常
+    if(delay == 0) delay = 100 * us;
 
-    while (1)
+    while (delay--)
     {
-        tnow = SysTick->VAL;
-        if (tnow != told)
-        {
-            if (tnow < told)
-            {
-                tcnt += told - tnow;
-            }
-            else
-            {
-                tcnt += reload - tnow + told;
-            }
-            told = tnow;
-            if (tcnt >= ticks)
-            {
-                break;
-            }
-        }
+        __NOP(); // 插入空指令，防止优化导致循环被跳过
     }
 }
 
@@ -92,6 +109,6 @@ void BMI088_GYRO_NS_H(void)
 uint8_t BMI088_read_write_byte(uint8_t txdata)
 {
     uint8_t rx_data;
-    HAL_SPI_TransmitReceive(&BMI088_USING_SPI_UNIT, &txdata, &rx_data, 1, 1000);
+    HAL_SPI_TransmitReceive(&BMI088_USING_SPI_UNIT, &txdata, &rx_data, 1, 10);
     return rx_data;
 }

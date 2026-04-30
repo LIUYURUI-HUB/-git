@@ -5,9 +5,7 @@
 #include "../../Application/gait.h"
 #include "../../BSP/MOTORS/8010/motor_controller.h"
 #include "../../BSP/MOTORS/3508/3508_driver.h"
-#include "../../Application/jump.h"
 #include "string.h"
-
 typedef enum {
     ROBOT_STATE_IDLE = 0,
     ROBOT_STATE_FORWARD,
@@ -21,8 +19,7 @@ typedef enum {
 	GAIT_MODE_BOUND,
 	GAIT_MODE_PRONK
 } GaitMode_e;
-
-void state_zero0(void);
+void state_zero0(uint32_t now);
 void joystick_control(MotorController*ctrl1,MotorController*ctrl2,QuadrupedGait*gait,uint32_t startTime,LegAngles angles,uint32_t now);
 void button_control(MotorController* ctrl1, MotorController* ctrl2, QuadrupedGait* gait, uint32_t currentTime);
 void AS01_rx(MotorController*ctrl1,MotorController*ctrl2,QuadrupedGait*gait,uint32_t startTime,LegAngles angles,uint32_t now);

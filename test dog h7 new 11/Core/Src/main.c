@@ -1,20 +1,20 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -27,17 +27,19 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "../../BSP/MOTORS/8010/gom_protocol.h"
 #include <string.h>
-#include "../../BSP/MOTORS/8010/motor_controller.h"
-#include "../../BSP/MOTORS/8010/rs485.h"
 #include <stdio.h>
-#include "../../BSP/MOTORS/3508/3508_driver.h"
-#include "../../MIddleware/kinematics.h"
-#include "../../Application/gait.h"
-#include "../../Application/jump.h"
-#include "../../BSP/AS01/AS01.h"
-#include "../../Application/control.h"
+
+#include "gom_protocol.h"
+#include "motor_controller.h"
+#include "3508_driver.h"
+
+#include "rs485.h"
+#include "AS01.h"
+#include "kinematics.h"
+#include "gait.h"
+#include "control.h"
+#include "Chassis_Control.h"
 #include "Attitude_solution.h"
 
 /* USER CODE END Includes */
@@ -64,85 +66,157 @@ extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
 extern FDCAN_HandleTypeDef hfdcan1; // 确保 FDCAN1 声明存在
 extern FDCAN_HandleTypeDef hfdcan3;
+
 Currentpos currentpos1;
 Currentpos currentpos2;
 Currentpos currentpos3;
 Currentpos currentpos4;
 LegAngles angles;
 QuadrupedGait gait;
+
 extern Motor_3508_T Motors[4];
 MotorController ctrl1;
 MotorController ctrl2;
+
 RemoteData_t myPacket;
 uint8_t rx_buffer[32];
 uint8_t rx_data[32];
-int is_calibrated = 1;
-float my_accel[3];  // 用来接收 X,Y,Z 加速度
-float my_gyro[3];   // 用来接收 X,Y,Z 角速度
-float my_temp;      // 用来接收温度
-uint32_t attitude_last_time = 0;
 
+//BMI088
+float system_run_time = 0.0f;
+uint32_t last_tick = 0;
+
+float gyro[3] = {0};
+float accel[3] = {0};
+float temp = 0.0f;
+
+uint32_t attitude_last_time = 0;
+float debug_pitch = 0, debug_roll = 0, debug_yaw = 0;
+
+int is_calibrated = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
-
+extern uint8_t BMI088_init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-  /* USER CODE BEGIN Callback 0 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	/* USER CODE BEGIN Callback 0 */
 	if (htim->Instance == TIM4) {
-	        static uint8_t step = 0;
-	        switch(step) {
-	            case 0:
-	                MotorController_SendCommand2(&ctrl2, 1);
-//	                MotorController_SendCommand1(&ctrl1, 3);
-	                step = 1;
-	                break;
-	            case 1:
-	                MotorController_SendCommand2(&ctrl2, 2);
-//	                MotorController_SendCommand1(&ctrl1, 4);
-	                step = 2;
-	                break;
-	            case 2:
-	                MotorController_SendCommand2(&ctrl2, 7);
-//	                 MotorController_SendCommand1(&ctrl1, 5);
-	                step = 3;
-	                break;
-	            case 3:
-	                MotorController_SendCommand2(&ctrl2, 8);
-//	                MotorController_SendCommand1(&ctrl1, 6);
-	                step = 0 ;
-	                break;
-	        }
-	    }
+		static uint8_t step = 0;
+		switch (step) {
+		case 0:
+			MotorController_SendCommand2(&ctrl2, 1);
+			step = 1;
+			break;
+		case 1:
+			MotorController_SendCommand2(&ctrl2, 2);
+			step = 2;
+			break;
+		case 2:
+			MotorController_SendCommand2(&ctrl2, 7);
+			step = 3;
+			break;
+		case 3:
+			MotorController_SendCommand2(&ctrl2, 8);
+			step = 0;
+			break;
+		}
+	}
 	if (htim->Instance == TIM3) {
-	        static uint8_t time =0 ;
-	        switch(time) {
-	            case 0:
-	                MotorController_SendCommand1(&ctrl1, 3);
-	                time= 1;
-	                break;
-	            case 1:
-	                MotorController_SendCommand1(&ctrl1, 4);
-	                time= 2;
-	                break;
-	            case 2:
-	                MotorController_SendCommand1(&ctrl1, 6);
-	                time= 3;
-	                break;
-	            case 3:
-	                MotorController_SendCommand1(&ctrl1, 5);
-	                time= 0 ;
-	                break;
-	        }
-	    }
+		static uint8_t time = 0;
+		switch (time) {
+		case 0:
+			MotorController_SendCommand1(&ctrl1, 3);
+			time = 1;
+			break;
+		case 1:
+			MotorController_SendCommand1(&ctrl1, 4);
+			time = 2;
+			break;
+		case 2:
+			MotorController_SendCommand1(&ctrl1, 6);
+			time = 3;
+			break;
+		case 3:
+			MotorController_SendCommand1(&ctrl1, 5);
+			time = 0;
+			break;
+		}
+	}
 
+}
+
+/**
+ * @brief   接收回调函数
+ * @param   hfdcan      FDCAN句柄指针
+ * @param   RxFifo0ITs  FIFO0中断标志
+ * @retval  none
+ */
+// 在你的 main.c 或者 fdcan.c 里的中断回调函数中
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+    FDCAN_RxHeaderTypeDef RxHeader;
+    uint8_t RxData[8];
+
+    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0) {
+        while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0) > 0) {
+            if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
+                if (hfdcan->Instance == FDCAN1) {
+                    D3508_Decode(RxData, (uint16_t)RxHeader.Identifier);
+                }
+                else if (hfdcan->Instance == FDCAN3) {
+                    D3508_Decode(RxData, (uint16_t)RxHeader.Identifier);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @brief  系统状态更新任务（整合了姿态更新和运行时间计算）
+ */
+void Task_System_State_Update(void) {
+    /* ========== 1. 姿态解算更新 (100Hz) ========== */
+    uint32_t current_time = HAL_GetTick();
+    float dt = (current_time - attitude_last_time) / 1000.0f;
+    attitude_last_time = current_time;
+
+    /* 限制 dt 范围 */
+    if (dt > 0.1f) dt = 0.01f;
+    if (dt < 0.001f) dt = 0.01f;
+
+    /* 更新姿态 */
+    Attitude_Update(dt);
+
+    /* 获取解算角度 (用于调试或控制) */
+    debug_pitch = g_Attitude.Angle_Pitch;
+    debug_roll  = g_Attitude.Angle_Roll;
+    debug_yaw   = g_Attitude.Angle_Yaw;
+
+    /* ========== 2. 原有 BMI088 数据读取 (兼容旧代码) ========== */
+    gyro[0] = g_Attitude.Gyro_X;
+    gyro[1] = g_Attitude.Gyro_Y;
+    gyro[2] = g_Attitude.Gyro_Z;
+    accel[0] = g_Attitude.Accel_X;
+    accel[1] = g_Attitude.Accel_Y;
+    accel[2] = g_Attitude.Accel_Z;
+    temp = g_Attitude.Temperature;
+
+    /* ========== 3. 系统运行时间更新 ========== */
+    uint32_t now = HAL_GetTick();
+    if(now - last_tick >= 5) {
+        float dt_sys = (now - last_tick) / 1000.0f;
+        last_tick = now;
+        system_run_time += dt_sys;
+
+
+    }
 }
 /* USER CODE END 0 */
 
@@ -166,7 +240,6 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -179,6 +252,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
+  MX_SPI2_Init();
   MX_SPI3_Init();
   MX_TIM4_Init();
   MX_USART2_UART_Init();
@@ -186,71 +260,59 @@ int main(void)
   MX_FDCAN3_Init();
   MX_FDCAN1_Init();
   MX_TIM3_Init();
-  MX_SPI2_Init();
-  MX_TIM2_Init();
-  HAL_Delay(200); // 等待 BMI088 上电和 SPI 外设稳定，兼容不同板级电源时序
-  Attitude_Init();
-
+  Chassis_Control_Init(); // 【新增】：初始化底盘控制PID（极其重要，否则Kp/Ki/Kd参数为空）
   /* USER CODE BEGIN 2 */
   HAL_FDCAN_ActivateNotification(&hfdcan3, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
-  D3508_Init();
-  FDCAN1_Filter_Init();
-  FDCAN3_Filter_Init();
+	D3508_Init();
+    FDCAN1_Filter_Init();
+    FDCAN3_Filter_Init();
 
-  MotorController_Init(&ctrl1, &huart2, RS485_REDE1_GPIO_Port, RS485_REDE1_Pin);
-  MotorController_Init(&ctrl2, &huart3, RS485_REDE2_GPIO_Port, RS485_REDE2_Pin);
+    Attitude_Init();
 
-  uint32_t startTime = HAL_GetTick() / 1000;
-  uint32_t last_tick = HAL_GetTick();
-  uint32_t last_kinematics_tick = HAL_GetTick();
-  state_zero(startTime,2.7);
-  HAL_Delay(1000);
+	MotorController_Init(&ctrl1, &huart2, RS485_REDE1_GPIO_Port, RS485_REDE1_Pin);
+	MotorController_Init(&ctrl2, &huart3, RS485_REDE2_GPIO_Port, RS485_REDE2_Pin);
 
-  if (NRF24L01_Check_SPI() == 0) {
-    NRF24L01_Init();
-  }
+	uint32_t startTime=HAL_GetTick()/1000;
+	   HAL_TIM_Base_Start_IT(&htim3);
+	   HAL_Delay(50);
+	 //          for (uint8_t i = 0; i < 4; i++) {
+	 //              calibrate_leg_base_position(&gait, i, &ctrl2);
+	 //          }
+	 //          start_quadruped_gait(&gait,startTime);
 
-  HAL_TIM_Base_Start_IT(&htim4);
-  HAL_TIM_Base_Start_IT(&htim3);
+	   // last_kinematics_tick 供运动学独立时间调度
+	   uint32_t last_tick = HAL_GetTick();
+	   uint32_t last_kinematics_tick = HAL_GetTick();
+	   HAL_Delay(500);
+	   if(NRF24L01_Check_SPI() == 0) {
+	             NRF24L01_Init();
+	          }
+	   HAL_Delay(20);
 
-  attitude_last_time = HAL_GetTick();
-
-  if (g_Attitude.Init_OK) {
-    Attitude_Calibrate_Static_Gyro();
-  }
-
-  HAL_Delay(2000);
+	  HAL_TIM_Base_Start_IT(&htim3);
+	  HAL_TIM_Base_Start_IT(&htim4);
+	  last_tick = HAL_GetTick();
+	  attitude_last_time = HAL_GetTick();
+	  HAL_Delay(1000);
   /* USER CODE END 2 */
-
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-      uint32_t now = HAL_GetTick();
-      if(now - last_tick >= 5) {
-          float dt = (now - attitude_last_time) / 1000.0f;
-          last_tick = now;
-          attitude_last_time = now;
+	while (1) {
+        uint32_t now = HAL_GetTick();
+        if(now - last_tick >= 5) {
+            last_tick = now;
+//            system_run_time += dt;
 
-          if (dt > 0.1f)  dt = 0.01f;
-          if (dt < 0.001f) dt = 0.01f;
-
-          Attitude_Update(dt);
-
-          my_gyro[0] = g_Attitude.Gyro_X;
-          my_gyro[1] = g_Attitude.Gyro_Y;
-          my_gyro[2] = g_Attitude.Gyro_Z;
-
-          my_accel[0] = g_Attitude.Accel_X;
-          my_accel[1] = g_Attitude.Accel_Y;
-          my_accel[2] = g_Attitude.Accel_Z;
-
-          my_temp = g_Attitude.Temperature;
-
-          send_current();
-      }
-
+//            for(int i = 0; i < 4; i++) {
+//                float motor_angle = 200.0f;
+//                Motors[i].target_angle = (int64_t)(motor_angle * 19.0f * 8192.0f / 360.0f);
+//                PID_Calc_Position(i, Motors[i].target_angle);
+//            }
+//            send_current();
+         Task_System_State_Update();  //姿态角
+//         HAL_Delay(1);
+        }
 		if (now - last_kinematics_tick >= 20) {
 			last_kinematics_tick = now;
 			AS01_rx(&ctrl1, &ctrl2, &gait, startTime, angles, now);
@@ -259,11 +321,10 @@ int main(void)
 //			currentpos3 = ForwardKinematics(&ctrl1, 3, 4);
 //			currentpos4 = ForwardKinematics(&ctrl1, 6, 5);
 		}
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+	}
   /* USER CODE END 3 */
 }
 
@@ -328,81 +389,56 @@ void SystemClock_Config(void)
 /* USER CODE BEGIN 4 */
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    if(huart == &huart2) {
-        RS485_RxMode1();
-        HAL_UART_Receive_DMA(ctrl1.uart,
-                            (uint8_t*)&ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data,
-                             sizeof(ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data));
+	if (huart == &huart2) {
+//		RS485_RxMode1();
+		HAL_UART_Receive_DMA(ctrl1.uart,
+				(uint8_t*) &ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data,
+				sizeof(ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data));
 
-    }
-    if(huart == &huart3) {
-        RS485_RxMode2();
-        HAL_UART_Receive_DMA(ctrl2.uart,
-                            (uint8_t*)&ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data,
-                             sizeof(ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data));
+	}
+	if (huart == &huart3) {
+//		RS485_RxMode2();
+		HAL_UART_Receive_DMA(ctrl2.uart,
+				(uint8_t*) &ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data,
+				sizeof(ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data));
 
-    }
+	}
 }
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart == &huart2) {
-    	extract_data(&ctrl1.datas[ctrl1.last_sent_motor_id]); // 处理数据
-    	ctrl1.dma_busy = 0;
-    }
-    if (huart == &huart3) {
-    	extract_data(&ctrl2.datas[ctrl2.last_sent_motor_id]); // 处理数据
-    	ctrl2.dma_busy = 0;
-    }
+	if (huart == &huart2) {
+		extract_data(&ctrl1.datas[ctrl1.last_sent_motor_id]); // 处理数据
+		ctrl1.dma_busy = 0;
+	}
+	if (huart == &huart3) {
+		extract_data(&ctrl2.datas[ctrl2.last_sent_motor_id]); // 处理数据
+		ctrl2.dma_busy = 0;
+	}
 }
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-        // 匹配是哪个控制器的 UART 发生了错误
-        if (huart == &huart2) {
-        	extern MotorController ctrl1;
-            // 1. 解除该控制器的忙碌锁定状态
-            ctrl1.dma_busy = 0;
-
-            // 2. 终止正在进行的错误 DMA 传输，重置外设状态机
-            HAL_UART_Abort(huart);
-            HAL_UART_AbortReceive_IT(huart);
-
-            // 3. 将 RS485 方向引脚拉低，切回接收模式，防止一直占用发送总线
-            if (ctrl1.de_port != NULL) {
-                HAL_GPIO_WritePin(ctrl1.de_port, ctrl1.de_pin, GPIO_PIN_RESET);
-            }
-            HAL_UART_Receive_DMA(ctrl1.uart,
-                                (uint8_t*)&ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data,
-                                 sizeof(ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data));
-        }
-        else if (huart == &huart3) {
-        	extern MotorController ctrl2;
-            // 1. 解除该控制器的忙碌锁定状态
-            ctrl2.dma_busy = 0;
-
-            // 2. 终止正在进行的错误 DMA 传输，重置外设状态机
-            HAL_UART_Abort(huart);
-            HAL_UART_AbortReceive_IT(huart);
-
-            // 3. 将 RS485 方向引脚拉低，切回接收模式，防止一直占用发送总线
-            if (ctrl2.de_port != NULL) {
-                HAL_GPIO_WritePin(ctrl2.de_port, ctrl2.de_pin, GPIO_PIN_RESET);
-            }
-            HAL_UART_Receive_DMA(ctrl2.uart,
-                                        (uint8_t*)&ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data,
-                                         sizeof(ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data));
-        }
-
-//    if (huart== &huart3)
-//    {
-//        extern MotorController ctrl2; // 换成你实际的变量名
-//        ctrl2.dma_busy = 0;           // 强制解除锁定
-//        RS485_RxMode2();                   // 恢复接收模式
-//    }
-//    if (huart== &huart2)
-//    {
-//        extern MotorController ctrl1; // 换成你实际的变量名
-//        ctrl1.dma_busy = 0;           // 强制解除锁定
-//        RS485_RxMode1();                   // 恢复接收模式
-//    }
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+	// 匹配是哪个控制器的 UART 发生了错误
+	if (huart == &huart2) {
+		extern MotorController ctrl1;
+		ctrl1.dma_busy = 0;
+		HAL_UART_Abort(huart);
+		HAL_UART_AbortReceive_IT(huart);
+		if (ctrl1.de_port != NULL) {
+			HAL_GPIO_WritePin(ctrl1.de_port, ctrl1.de_pin, GPIO_PIN_RESET);
+		}
+		HAL_UART_Receive_DMA(ctrl1.uart,
+				(uint8_t*) &ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data,
+				sizeof(ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data));
+	} else if (huart == &huart3) {
+		extern MotorController ctrl2;
+		ctrl2.dma_busy = 0;
+		HAL_UART_Abort(huart);
+		HAL_UART_AbortReceive_IT(huart);
+		if (ctrl2.de_port != NULL) {
+			HAL_GPIO_WritePin(ctrl2.de_port, ctrl2.de_pin, GPIO_PIN_RESET);
+		}
+		HAL_UART_Receive_DMA(ctrl2.uart,
+				(uint8_t*) &ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data,
+				sizeof(ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data));
+	}
 }
 /* USER CODE END 4 */
 

@@ -151,17 +151,6 @@
 //    return angles;
 //}
 
-
-
-
-
-
-
-
-
-
-
-
 //悬空状态启动
 #include "kinematics.h"
 #include <math.h>
