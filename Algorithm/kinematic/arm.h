@@ -1,5 +1,6 @@
 #ifndef ARM_H_
 #define ARM_H_
+#include <stdint.h>
 
 /**
  * @brief 机械臂物理参数
@@ -37,14 +38,9 @@ typedef struct {
     float z_pan;
 } End_Pos_t;
 
-//// 定义机械臂目标位置结构体
-//typedef struct {
-//    float x;
-//    float y;
-//    float z;
-//} ArmTarget_t;
+
 // 【新增】：用于在 STM32CubeIDE Live Expressions 实时观测的全局调试变量
-// ==============================================================================
+
 typedef struct {
 	//重力补偿观测参数
     float q1_rad;       // 换算后送入模型的大臂角度 (rad)
@@ -66,7 +62,32 @@ typedef struct {
     float tau_ff_m3;    // M3 前馈力矩 (重力+摩擦力)
 
 } ArmDebug_t;
+extern ArmDebug_t arm_debug;
 
+
+// ========================= 运输构型保持模式 =========================
+// 0：普通模式，按原版逆解自由选解
+// 1：运输模式，优先保持抓取成功时的“肘部在上”构型，主要依靠底座旋转运输
+extern uint8_t arm_transport_mode;
+
+// 抓取成功瞬间记录的运输参考姿态
+extern float transport_alpha_ref;
+extern float transport_beta_ref;
+extern float transport_omega_ref;
+
+// 记录抓取成功时，逆解实际采用的 L_val 符号
+// 用来约束运输阶段尽量保持同侧臂展方向，避免切到会翻箱子的另一类解
+extern float transport_L_ref;
+
+// 当前一次 IK 成功解算时选择的 L_val
+// 在吸附成功瞬间，状态机会把它保存到 transport_L_ref
+extern float last_ik_L_val;
+
+// 运输模式下允许的姿态偏移窗口（单位：rad）
+// 如果某个候选解偏离抓取姿态过大，则认为会让箱体姿态恶化，直接丢弃
+extern float transport_alpha_window;
+extern float transport_beta_window;
+extern float transport_omega_window;
 /**
  * @brief 机械臂正运动学解算
  * @param lengths 机械臂连杆长度参数

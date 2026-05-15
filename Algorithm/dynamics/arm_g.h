@@ -6,8 +6,19 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+
 extern float arm_payload_mass;
 extern uint8_t arm_loaded_mode;
+
+// ========================= 带载模式相关 =========================
+// 末端附加载荷质量（单位：kg）
+// 抓取前为 0，抓取成功后设为物资箱质量
+extern float arm_payload_mass;
+
+// 0：空载控制参数
+// 1：带载控制参数
+extern uint8_t arm_loaded_mode;
+
 
 typedef struct {
     float m1;       // 大臂质量 (kg)

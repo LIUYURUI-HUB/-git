@@ -53,7 +53,7 @@ struct {
     float x;
     float y;
     float z;
-} arm_target = {0.18f, 0.0f, -0.22f};
+} arm_target = {0.10f, 0.0f, -0.35f};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -250,7 +250,6 @@ void Task_System_State_Update(void) {
         last_tick = now;
         system_run_time += dt_sys;
 
-
     }
 }
 
@@ -400,8 +399,8 @@ int main(void)
 	  	    	// 1. 调用正解函数
 	  	    	run_arm_kinematics();
 
-//	            // 2.1 视觉任务状态机 (内部会按需调用 run_arm_to_pos)
-//	            Task_Vision_State_Machine();
+	            // 2.1 视觉任务状态机 (内部会按需调用 run_arm_to_pos)
+	            Task_Vision_State_Machine();
 //	            // 2.2 遥控器控制
 //	  	    	arm_knob_direct_control();
 //

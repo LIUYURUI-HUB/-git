@@ -12,8 +12,32 @@ extern End_Pos_t end_effector_pos;
 extern ArmGravityParams_t arm_g_params;
 ArmDebug_t arm_debug = {0}; // 全局实例，在 STM32CubeIDE 搜索此变量添加观测
 
-float arm_payload_mass=0;
-uint8_t arm_loaded_mode=0;
+// ========================= 载荷/运输模式全局状态 =========================
+// 末端附加载荷质量（kg）
+float arm_payload_mass = 0.0f;
+
+// 0：空载参数；1：带载参数
+uint8_t arm_loaded_mode = 0;
+
+// 0：普通自由求解；1：运输构型保持模式
+uint8_t arm_transport_mode = 0;
+
+// 抓取成功时记录的运输参考姿态
+float transport_alpha_ref = 0.0f;
+float transport_beta_ref  = 0.0f;
+float transport_omega_ref = 0.0f;
+
+// 抓取成功时记录的臂展方向参考
+float transport_L_ref = 0.0f;
+
+// 当前一次 IK 成功解出来的 L_val，供状态机在抓取成功瞬间记忆
+float last_ik_L_val = 0.0f;
+
+// 运输姿态窗口（可现场调参）
+// 数值越小，运输时姿态保持越严格；数值越大，避障灵活性越高
+float transport_alpha_window = 0.55f;
+float transport_beta_window  = 0.55f;
+float transport_omega_window = 0.70f;
 
 // 2. 完美匹配 Python 上位机 "<I 8f" 的结构体 (总共 40 字节)
 #pragma pack(push, 1)
@@ -37,10 +61,13 @@ static float normalize_angle(float angle) {
     while (angle < -M_PI) angle += 2.0f * M_PI;
     return angle;
 }
-
+// 计算两个角度之间的最小差值，结果范围固定在 [-pi, pi]
+static float angle_diff(float a, float b) {
+    return normalize_angle(a - b);
+}
 // 1. 底座旋转 (Gamma - 对应电机 ID: 0x01, 数组下标 0)
 #define M1_ZERO_OFFSET   -0.000190734863f     // 填入: 底座朝正前方时的 POS 值
-#define M1_DIR           1.0f                 // 往左转(Y轴正向)为 1.0f，往右转为 -1.0f
+#define M1_DIR           1.0f
 
 // 2. 大臂俯仰 (Alpha - 对应电机 ID: 0x02, 数组下标 1)
 #define M2_ZERO_OFFSET   -0.000190734863f     // 填入: 大臂完全水平伸直时的 POS 值
@@ -59,7 +86,6 @@ static float normalize_angle(float angle) {
 #define M2_TORQUE_SIGN   -1.0f
 #define M3_TORQUE_SIGN    1.0f
 #define M4_TORQUE_SIGN    1.0f
-
 
 #define Q    0.2217f
 
@@ -163,7 +189,7 @@ void run_arm_drag_teach_mode(void) {
     DM_Send_Ctrl(0x01, Arm_Motors[0].POS, 0.0f, 0.0f, drag_kd_m1, 0.0f);
     DM_Send_Ctrl(0x02, Arm_Motors[1].POS, 0.0f, 0.0f, drag_kd_m2, tau_m2);
     DM_Send_Ctrl(0x03, Arm_Motors[2].POS, 0.0f, 0.0f, drag_kd_m3, tau_m3);
-    DM_Send_Ctrl(0x04, Arm_Motors[3].POS, 0.0f, 0.0f, drag_kd_m4, 0.0f);
+    DM_Send_Ctrl(0x04, Arm_Motors[3].POS, 0.0f, 0.0f, drag_kd_m4, tau_m4);
 }
 
 /**
@@ -225,6 +251,8 @@ int Arm_IK(const Arm_Lengths_t *lengths, const End_Pos_t *target_pos, Joint_Angl
     float bases_g[2] = {g1, g2};
     float bases_L[2] = {L_total - lengths->h, -L_total - lengths->h};
 
+    // 保留原版完整双分支求解。
+    // 这样 arm_home、前方取箱点、以及原本可达的正常运动路径都不会被误杀。
     for (int i = 0; i < 2; i++) {
         float gamma = bases_g[i];
         float L = bases_L[i];
@@ -250,16 +278,15 @@ int Arm_IK(const Arm_Lengths_t *lengths, const End_Pos_t *target_pos, Joint_Angl
         float alpha_A = normalize_angle(phi1 + phi2);
         float beta_A  = normalize_angle(B + Q - (2.0f * M_PI));
 
-        // 【终极解绑】：彻底移除导致“半空死锁”的 alpha > 90度 限制。
-        // 因为前方已经有 Z>0 && X<0 的空气墙保护，而且下方的 max_elbow_x 会自动挑选最安全的高抬肘姿态。
+        // 构型 A
         candidates[candidate_count].gamma = gamma;
         candidates[candidate_count].alpha = alpha_A;
         candidates[candidate_count].beta  = beta_A;
         candidates[candidate_count].elbow_x = lengths->hu * sinf(alpha_A);
-        candidates[candidate_count].L_val = L;  // 保存臂展方向
+        candidates[candidate_count].L_val = L;
         candidate_count++;
 
-        // === 构型 B ===
+        // 构型 B
         float alpha_B = normalize_angle(phi1 - phi2);
         float beta_B  = normalize_angle(-B + Q);
 
@@ -267,27 +294,93 @@ int Arm_IK(const Arm_Lengths_t *lengths, const End_Pos_t *target_pos, Joint_Angl
         candidates[candidate_count].alpha = alpha_B;
         candidates[candidate_count].beta  = beta_B;
         candidates[candidate_count].elbow_x = lengths->hu * sinf(alpha_B);
-        candidates[candidate_count].L_val = L;  // 保存臂展方向
+        candidates[candidate_count].L_val = L;
         candidate_count++;
     }
 
     int best_idx = -1;
     float max_elbow_x = -9999.0f;
 
+    // 运输模式下的“最接近参考姿态”代价
+    float best_transport_cost = 9999.0f;
+
+    // 如果严格窗口内没有解，则允许在“同侧臂展方向”前提下选最接近的那个解
+    // 这样比直接失败更灵活，能给机身附近小障碍留出少量绕行余量。
+    int relaxed_transport_idx = -1;
+    float relaxed_transport_cost = 9999.0f;
+
     for (int i = 0; i < candidate_count; i++) {
         float m1_pos = (candidates[i].gamma / M1_DIR) + M1_ZERO_OFFSET;
         float m2_pos = (candidates[i].alpha / M2_DIR) + M2_ZERO_OFFSET;
         float m3_pos = (candidates[i].beta / M3_DIR) + M3_ZERO_OFFSET;
 
-        if (m1_pos >= -1.57f && m1_pos <= 1.57f &&
+        // 基础关节限位筛选
+        // 这里保留你当前工程里已经接入的 M1 实际死区范围
+        if (m1_pos >= -3.10997963f && m1_pos <= 2.47940063f &&
             m2_pos >= -3.19f && m2_pos <= 0.05f &&
             m3_pos >= -0.05f && m3_pos <= 3.19f)
         {
-            if (candidates[i].elbow_x > max_elbow_x) {
-                max_elbow_x = candidates[i].elbow_x;
-                best_idx = i;
+            if (arm_transport_mode) {
+                float virtual_alpha = candidates[i].alpha;
+                float virtual_beta  = candidates[i].beta - Q + M_PI;
+                float omega;
+
+                if (candidates[i].L_val >= 0.0f) {
+                    omega = -(virtual_alpha + virtual_beta);
+                } else {
+                    omega = M_PI - (virtual_alpha + virtual_beta);
+                }
+
+                while (omega > M_PI) omega -= 2.0f * M_PI;
+                while (omega < -M_PI) omega += 2.0f * M_PI;
+
+                // ============================================================
+                // 运输模式约束：
+                // 1. 优先保持抓取成功时同一侧的臂展方向，避免切到另一类会翻箱子的构型
+                // 2. 优先保持抓取成功时的肘上姿态，尽量让 M2/M3/M4 只做小幅修正
+                // 3. 真正的大范围转运主要交给底座 M1 去完成
+                // ============================================================
+                if ((transport_L_ref > 0.0f && candidates[i].L_val < 0.0f) ||
+                    (transport_L_ref < 0.0f && candidates[i].L_val > 0.0f)) {
+                    continue;
+                }
+
+                float alpha_err = fabsf(angle_diff(candidates[i].alpha, transport_alpha_ref));
+                float beta_err  = fabsf(angle_diff(candidates[i].beta,  transport_beta_ref));
+                float omega_err = fabsf(angle_diff(omega,               transport_omega_ref));
+                float transport_cost = alpha_err + beta_err + omega_err;
+
+                // 先记录一个“同侧方向下最接近参考姿态”的候选，作为严格窗口无解时的兜底
+                if (transport_cost < relaxed_transport_cost) {
+                    relaxed_transport_cost = transport_cost;
+                    relaxed_transport_idx = i;
+                }
+
+                // 严格窗口判断：只有姿态偏移在允许范围内，才算运输模式下的优先合法解
+                if (alpha_err <= transport_alpha_window &&
+                    beta_err  <= transport_beta_window  &&
+                    omega_err <= transport_omega_window) {
+
+                    if (best_idx == -1 || transport_cost < best_transport_cost) {
+                        best_transport_cost = transport_cost;
+                        best_idx = i;
+                    }
+                }
+            } else {
+                // 普通模式下保持原版逻辑：
+                // 优先选择肘部更高的解，保证前方取箱和 arm_home 等原始路径尽量不变
+                if (candidates[i].elbow_x > max_elbow_x) {
+                    max_elbow_x = candidates[i].elbow_x;
+                    best_idx = i;
+                }
             }
         }
+    }
+
+    // 如果运输模式下严格窗口无解，则退而求其次：
+    // 保持同侧臂展方向不变，选最接近参考姿态的那个解。
+    if (arm_transport_mode && best_idx == -1 && relaxed_transport_idx != -1) {
+        best_idx = relaxed_transport_idx;
     }
 
     if (best_idx != -1) {
@@ -305,14 +398,18 @@ int Arm_IK(const Arm_Lengths_t *lengths, const End_Pos_t *target_pos, Joint_Angl
             angles->omega = M_PI - (virtual_alpha + virtual_beta);
         }
 
-        while (angles->omega > M_PI) { angles->omega -= 2.0f * M_PI; }
-        while (angles->omega < -M_PI) { angles->omega += 2.0f * M_PI; }
+        while (angles->omega > M_PI) angles->omega -= 2.0f * M_PI;
+        while (angles->omega < -M_PI) angles->omega += 2.0f * M_PI;
+
+        // 记录当前 IK 最终选中的臂展方向，供状态机在抓取成功瞬间保存为运输参考
+        last_ik_L_val = chosen_L;
 
         return 0;
     }
 
     return -1;
 }
+
 
 /**
  * @brief 执行平滑控制，针对视觉联调优化的笛卡尔空间跟随
@@ -361,9 +458,9 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
     }
 
     // 笛卡尔空间匀速直线插补 + 末端柔顺滤波
-    float max_linear_speed = 0.2f; // 设定的最大线速度：0.2米/秒 (20cm/s)
+    float max_linear_speed = 0.26f; // 设定的最大线速度：0.26米/秒 (26cm/s)
     if (arm_loaded_mode) {
-        max_linear_speed = 0.14f;
+        max_linear_speed = 0.15f;
     }
     float max_step = max_linear_speed * dt; // 每个控制周期(5ms)允许移动的最大物理距离
 
@@ -379,9 +476,10 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
         current_cmd_z += (diff_z / dist) * max_step;
     } else {
         // 2. 距离极近时：切回【一阶低通滤波】消除震荡，使停稳
-        float alpha = 0.05f;
+        // 【调参一】：提高收敛系数，避免收尾时缓慢拖泥带水
+        float alpha = 0.10f; // 原 0.05f
         if (arm_loaded_mode) {
-            alpha = 0.08f;
+            alpha = 0.08f;   // 原 0.08f
         }
         current_cmd_x = (1.0f - alpha) * current_cmd_x + alpha * target_tx;
         current_cmd_y = (1.0f - alpha) * current_cmd_y + alpha * target_ty;
@@ -418,10 +516,10 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
         if (step_m3 > max_step_safe) dir_m3 = 1.0f; else if (step_m3 < -max_step_safe) dir_m3 = -1.0f; else dir_m3 = 0.0f;
 
         // 【针对 M4 吸盘的独立平滑优化】：
-        // 跨越底座时吸盘会瞬间反转180度，大幅降低最大角速度，让翻转更柔和。
-        float max_m4_speed = 1.2f; // 设定最大翻转角速度：约 70度/秒
+        // 吸盘姿态直接关系到箱体是否“低头”或被翻到朝天，因此仍然保留独立限速。
+        float max_m4_speed = 1.5f;
         if (arm_loaded_mode) {
-            max_m4_speed = 0.8f;
+            max_m4_speed = 0.75f;
         }
         float max_m4_step = max_m4_speed * dt;
         float step_m4 = target_m4_pos - current_m4_cmd;
@@ -438,15 +536,13 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
         }
 
         // M1, M2, M3 因为已有 XYZ 笛卡尔平滑，直接全盘跟随
+        // 运输时真正的大范围姿态约束由 IK 候选解筛选完成，这里不再额外硬锁底座策略
         current_m1_cmd = target_m1_pos;
         current_m2_cmd = target_m2_pos;
         current_m3_cmd = target_m3_pos;
-        // current_m4_cmd 已在上方面被单独平滑限速处理，不再暴力覆盖
 
     } else {
-
-        // 遇到超限或空气墙时，靠 static 特性让关节指令原地锁死！
-
+        // 遇到超限或空气墙时，靠 static 特性让关节指令原地锁死
         current_cmd_x = end_effector_pos.x;
         current_cmd_y = end_effector_pos.y;
         current_cmd_z = end_effector_pos.z;
@@ -464,14 +560,15 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
     last_m4_cmd = current_m4_cmd;
 
     // 动力学补偿
-    float tau_gravity_m2 = 0.0f, tau_gravity_m3 = 0.0f,tau_gravity_m4 = 0.0f;
-    Arm_Calc_Gravity_Torque(current_m2_cmd, current_m3_cmd, &tau_gravity_m2, &tau_gravity_m3,&tau_gravity_m4);
+    float tau_gravity_m2 = 0.0f, tau_gravity_m3 = 0.0f, tau_gravity_m4 = 0.0f;
+    Arm_Calc_Gravity_Torque(current_m2_cmd, current_m3_cmd, &tau_gravity_m2, &tau_gravity_m3, &tau_gravity_m4);
 
     // 刚度参数
-    float Kp_m1 = 40.0f, Kd_m1 = 1.5f;
-    float Kp_m2 = 40.0f, Kd_m2 = 1.0f;
-    float Kp_m3 = 40.0f, Kd_m3 = 1.0f;
-    float Kp_m4 = 40.0f, Kd_m4 = 1.0f;
+    // 【调参二】：温和提升 Kp 刚性让跟随更紧凑，小幅提升 Kd 避免震荡
+    float Kp_m1 = 45.0f, Kd_m1 = 1.5f; // Kp 原 40.0
+    float Kp_m2 = 50.0f, Kd_m2 = 1.2f; // Kp 原 40.0, Kd 原 1.0
+    float Kp_m3 = 50.0f, Kd_m3 = 1.2f; // Kp 原 40.0, Kd 原 1.0
+    float Kp_m4 = 40.0f, Kd_m4 = 1.0f; // M4 维持不变
 
     // 摩擦力补偿
     float coulomb_fric_m1 = 0.20f;
@@ -480,9 +577,9 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
     float coulomb_fric_m4 = 0.10f;
 
     if (arm_loaded_mode) {
-        Kp_m1 = 48.0f; Kd_m1 = 2.0f;
-        Kp_m2 = 58.0f; Kd_m2 = 2.2f;
-        Kp_m3 = 55.0f; Kd_m3 = 1.8f;
+        Kp_m1 = 55.0f; Kd_m1 = 2.0f; // Kp 原 48.0
+        Kp_m2 = 65.0f; Kd_m2 = 2.2f; // Kp 原 58.0
+        Kp_m3 = 60.0f; Kd_m3 = 1.8f; // Kp 原 55.0
         Kp_m4 = 48.0f; Kd_m4 = 1.5f;
 
         coulomb_fric_m2 = 0.34f;
@@ -491,13 +588,15 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
     }
 
     float max_i_m1 = 1.000f;
-    float max_i_m2 = 0.688f, max_i_m3 = 1.535f;
+    float max_i_m2 = 1.600f, max_i_m3 = 2.600f;
     float max_i_m4 = 0.500f;
-    float dead_zone = 0.005f;
-    float Ki = 50.0f;
+
+    // 【调参三】：压缩死区逼迫积分器在小误差域内继续干活；提高 Ki 增强消除残差的推力
+    float dead_zone = 0.003f; // 原 0.005f
+    float Ki = 65.0f;         // 原 50.0f
 
     if (arm_loaded_mode) {
-        Ki = 60.0f;
+        Ki = 75.0f;           // 原 60.0f
     }
 
     // 积分器消除稳态误差
@@ -541,11 +640,26 @@ void run_arm_to_pos(float target_tx, float target_ty, float target_tz) {
     float smooth_dir_m3 = v_des_m3 / (fabsf(v_des_m3) + 0.1f);
     float smooth_dir_m4 = v_des_m4 / (fabsf(v_des_m4) + 0.1f);
 
+    // 静止小误差保持摩擦补偿
+    // 当期望速度接近 0 时，原来的 smooth_dir 摩擦项会接近 0；
+    // 但实际关节如果还差一点，会被静摩擦卡住，所以这里按位置误差方向补一点力。
+    float hold_fric_m2 = 0.0f;
+    float hold_fric_m3 = 0.0f;
+
+    if (dir_m2 == 0.0f && fabsf(actual_err_m2) > dead_zone) {
+        hold_fric_m2 = (actual_err_m2 > 0.0f) ? 0.18f : -0.18f;
+    }
+
+    if (dir_m3 == 0.0f && fabsf(actual_err_m3) > dead_zone) {
+        hold_fric_m3 = (actual_err_m3 > 0.0f) ? 0.18f : -0.18f;
+    }
+
     // 计算最终前馈扭矩
+    // M4 这里保留重力前馈，确保挂载物资箱后吸盘不会自然“低头”
     float final_tau_m1 = (smooth_dir_m1 * coulomb_fric_m1) + err_i_m1;
-    float final_tau_m2 = tau_gravity_m2 + (smooth_dir_m2 * coulomb_fric_m2) + err_i_m2;
-    float final_tau_m3 = tau_gravity_m3 + (smooth_dir_m3 * coulomb_fric_m3) + err_i_m3;
-    float final_tau_m4 = (smooth_dir_m4 * coulomb_fric_m4) + err_i_m4;
+    float final_tau_m2 = tau_gravity_m2 + (smooth_dir_m2 * coulomb_fric_m2) + hold_fric_m2 + err_i_m2;
+    float final_tau_m3 = tau_gravity_m3 + (smooth_dir_m3 * coulomb_fric_m3) + hold_fric_m3 + err_i_m3;
+    float final_tau_m4 = tau_gravity_m4 + (smooth_dir_m4 * coulomb_fric_m4) + err_i_m4;
 
     arm_debug.cmd_m2_pos = current_m2_cmd;
     arm_debug.cmd_m3_pos = current_m3_cmd;
