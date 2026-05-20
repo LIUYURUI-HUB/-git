@@ -1,8 +1,7 @@
 /*
- * AS01.h (接收端)
+ * AS01.h
  *
- * Created on: Mar 7, 2026
- * Author: 22569
+ * NRF24L01/AS01 receiver interface.
  */
 
 #ifndef INC_AS01_H_
@@ -10,54 +9,63 @@
 
 #include "stm32h7xx_hal.h"
 
-/* 硬件引脚宏定义 - 必须在 CubeMX 中将 PA8 和 PA11 设为 Output Push-Pull */
 #define NRF_CE_GPIO_PORT    GPIOE
 #define NRF_CE_PIN          GPIO_PIN_0
 #define NRF_CSN_GPIO_PORT   GPIOE
 #define NRF_CSN_PIN         GPIO_PIN_1
 
-/* 引脚控制宏 */
-#define NRF_CE_LOW()      HAL_GPIO_WritePin(NRF_CE_GPIO_PORT, NRF_CE_PIN, GPIO_PIN_RESET)
-#define NRF_CE_HIGH()     HAL_GPIO_WritePin(NRF_CE_GPIO_PORT, NRF_CE_PIN, GPIO_PIN_SET)
-#define NRF_CSN_LOW()     HAL_GPIO_WritePin(NRF_CSN_GPIO_PORT, NRF_CSN_PIN, GPIO_PIN_RESET)
-#define NRF_CSN_HIGH()    HAL_GPIO_WritePin(NRF_CSN_GPIO_PORT, NRF_CSN_PIN, GPIO_PIN_SET)
+#define NRF_CE_LOW()        HAL_GPIO_WritePin(NRF_CE_GPIO_PORT, NRF_CE_PIN, GPIO_PIN_RESET)
+#define NRF_CE_HIGH()       HAL_GPIO_WritePin(NRF_CE_GPIO_PORT, NRF_CE_PIN, GPIO_PIN_SET)
+#define NRF_CSN_LOW()       HAL_GPIO_WritePin(NRF_CSN_GPIO_PORT, NRF_CSN_PIN, GPIO_PIN_RESET)
+#define NRF_CSN_HIGH()      HAL_GPIO_WritePin(NRF_CSN_GPIO_PORT, NRF_CSN_PIN, GPIO_PIN_SET)
 
-/* 遥控器数据包结构体 (必须与发送端完全一致) */
 typedef struct __attribute__((packed)) {
-    uint16_t joy_lx, joy_ly; // 左摇杆
-    uint16_t joy_rx, joy_ry; // 右摇杆
-    uint16_t knob[4];        // 4个旋钮
-    uint8_t  button[4];      // 4个按键
+    uint16_t joy_lx, joy_ly;
+    uint16_t joy_rx, joy_ry;
+    uint16_t knob[4];
+    uint8_t  button[8];
 } RemoteData_t;
 
-/* 指令集与寄存器定义 */
-#define CONFIG          0x00  // 配置寄存器
-#define EN_AA           0x01  // 自动应答
-#define EN_RXADDR       0x02  // 接收通道允许
-#define SETUP_RETR      0x04  // 建立重发
-#define RF_CH           0x05  // 射频通道
-#define RF_SETUP        0x06  // 射频寄存器
-#define STATUS          0x07  // 状态寄存器
+#define CONFIG          0x00
+#define EN_AA           0x01
+#define EN_RXADDR       0x02
+#define SETUP_RETR      0x04
+#define RF_CH           0x05
+#define RF_SETUP        0x06
+#define STATUS          0x07
 
-/* 状态标志位 */
-#define MAX_RT          0x10  // 达到最大重发中断
-#define TX_DS           0x20  // 发送完成中断
-#define RX_OK           0x40  // 接收数据就绪中断标志 (RX_DR)
+#define MAX_RT          0x10
+#define TX_DS           0x20
+#define RX_OK           0x40
 
-/* 地址与负载指令 */
-#define TX_ADDR         0x10  // 发送地址寄存器
-#define RX_ADDR_P0      0x0A  // 通道0接收地址寄存器
-#define RX_PW_P0        0x11  // 通道0接收数据长度 (必须设为32)
+#define RX_ADDR_P0      0x0A
+#define TX_ADDR         0x10
+#define RX_PW_P0        0x11
+#define FIFO_STATUS     0x17
 
-#define RD_RX_PLOAD     0x61  // 读取RX有效载荷指令
-#define WR_TX_PLOAD     0xA0  // 写TX有效载荷
-#define FLUSH_TX        0xE1  // 清除TX FIFO
-#define FLUSH_RX        0xE2  // 清除RX FIFO
+#define RD_RX_PLOAD     0x61
+#define WR_TX_PLOAD     0xA0
+#define FLUSH_TX        0xE1
+#define FLUSH_RX        0xE2
 
-/* 函数声明 */
-void NRF24L01_Init(void);                      // 接收初始化
-uint8_t NRF24L01_Check(void);                  // 模块连接检测
-uint8_t NRF24L01_Check_SPI(void);              // SPI 物理层检测
-uint8_t NRF24L01_RxPacket(uint8_t *rxbuf);     // 接收数据包函数
+void NRF24L01_Init(void);
+uint8_t NRF24L01_Check(void);
+uint8_t NRF24L01_Check_SPI(void);
+uint8_t NRF24L01_RxPacket(uint8_t *rxbuf);
+
+extern uint8_t g_NRF_Read_Debug[5];
+extern volatile uint8_t g_NRF_CheckSpiResult;      /* 0=pass, 1=fail, 0xFF=not checked */
+extern volatile uint8_t g_NRF_InitCalled;          /* 1=NRF24L01_Init() has run */
+extern volatile uint8_t g_NRF_LastRxStatus;        /* last STATUS register */
+extern volatile uint8_t g_NRF_LastRxOk;            /* 1=last poll saw RX_DR */
+extern volatile uint8_t g_NRF_RegConfig;           /* expected 0x0F */
+extern volatile uint8_t g_NRF_RegEnAa;             /* expected 0x01 */
+extern volatile uint8_t g_NRF_RegEnRxAddr;         /* expected 0x01 */
+extern volatile uint8_t g_NRF_RegRfCh;             /* expected 40 */
+extern volatile uint8_t g_NRF_RegRfSetup;          /* expected 0x26 */
+extern volatile uint8_t g_NRF_RegRxPwP0;           /* expected 32 */
+extern volatile uint8_t g_NRF_RegFifoStatus;       /* bit0=RX_EMPTY, bit1=RX_FULL */
+extern volatile uint8_t g_NRF_CePinState;          /* 1=CE high, 0=CE low */
+extern volatile uint8_t g_NRF_RxAddrP0_Debug[5];   /* expected 34 43 10 10 01 */
 
 #endif /* INC_AS01_H_ */

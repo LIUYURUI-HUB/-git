@@ -45,6 +45,7 @@
 #include "../../Application/gait.h"
 #include "AS01.h"
 #include "control.h"
+#include "protocol_handler.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -83,8 +84,7 @@ extern Motor_3508_T Motors[4];
 extern DM_Motor_t Arm_Motors[4];
 
 MotorController ctrl1;
-MotorController ctrl2;
-__attribute__((section(".RAM_D1")))__attribute__((section(".RAM_D1")))MotorController ctrl2;
+__attribute__((section(".RAM_D1"))) MotorController ctrl2;
 RemoteData_t myPacket;
 uint8_t rx_buffer[32];
 uint8_t rx_data[32];
@@ -99,12 +99,15 @@ float temp = 0.0f;
 uint32_t attitude_last_time = 0;
 float debug_pitch = 0, debug_roll = 0, debug_yaw = 0;
 int is_calibrated=1;
+static volatile uint8_t uart2_recover_pending = 0;
+static volatile uint8_t uart3_recover_pending = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
+static void Recover_Unitree_Uart_IfNeeded(void);
 void DM_Init(void);
 void run_arm_kinematics(void);
 void Task_Arm_Control(void);
@@ -189,14 +192,28 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
                 // FDCAN1：接收 3508 的电机 1、2
                 if (hfdcan->Instance == FDCAN1) {
                     D3508_Decode(RxData, (uint16_t)RxHeader.Identifier);
+                    g_robot_diag.fdcan1_rx_count++;
                 }
                 // FDCAN2：接收达妙电机
                 else if (hfdcan->Instance == FDCAN2) {
                     DM_RX_Decode(RxData, (uint16_t)RxHeader.Identifier);
+                    g_robot_diag.fdcan2_rx_count++;
                 }
                 // FDCAN3：接收 3508 的电机 3、4
                 else if (hfdcan->Instance == FDCAN3) {
                     D3508_Decode(RxData, (uint16_t)RxHeader.Identifier);
+                    g_robot_diag.fdcan3_rx_count++;
+                }
+            } else {
+                if (hfdcan->Instance == FDCAN1) {
+                    g_robot_diag.fdcan1_err_count++;
+                    g_robot_diag.fdcan1_last_error = hfdcan->ErrorCode;
+                } else if (hfdcan->Instance == FDCAN2) {
+                    g_robot_diag.fdcan2_err_count++;
+                    g_robot_diag.fdcan2_last_error = hfdcan->ErrorCode;
+                } else if (hfdcan->Instance == FDCAN3) {
+                    g_robot_diag.fdcan3_err_count++;
+                    g_robot_diag.fdcan3_last_error = hfdcan->ErrorCode;
                 }
             }
         }
@@ -312,17 +329,15 @@ int main(void)
 
    MotorController_Init(&ctrl1, &huart2, RS485_REDE1_GPIO_Port, RS485_REDE1_Pin);
    MotorController_Init(&ctrl2, &huart3, RS485_REDE2_GPIO_Port, RS485_REDE2_Pin);
+   Protocol_Init();
+   Control_Init(&gait);
    uint32_t startTime=HAL_GetTick()/1000;
-   HAL_TIM_Base_Start_IT(&htim3);
-   HAL_Delay(50);
  //          for (uint8_t i = 0; i < 4; i++) {
  //              calibrate_leg_base_position(&gait, i, &ctrl2);
  //          }
  //          start_quadruped_gait(&gait,startTime);
 
-   // last_kinematics_tick 供运动学独立时间调度
-   uint32_t last_tick = HAL_GetTick();
-   uint32_t last_kinematics_tick = HAL_GetTick();
+   uint32_t loop_tick_5ms = HAL_GetTick();
    HAL_Delay(500);
    if(NRF24L01_Check_SPI() == 0) {
              NRF24L01_Init();
@@ -337,19 +352,19 @@ int main(void)
     }
 
   // 向达妙电机发送设置 0 位指令。
-  for(uint16_t id = 0x01; id <= 0x04; id++) {
-    DM_Set_Zero_Pos(id);
-    HAL_Delay(10); // 必须加延时，等待指令发送完成及电机内部保存
-  }
-
-  for(uint16_t id = 0x01; id <= 0x04; id++) {
-    DM_Motor_Enable(id);
-    HAL_Delay(10); // 顺次启动，防止冲击电流
-  }
+//  for(uint16_t id = 0x01; id <= 0x04; id++) {
+//    DM_Set_Zero_Pos(id);
+//    HAL_Delay(10); // 必须加延时，等待指令发送完成及电机内部保存
+//  }
+//
+//  for(uint16_t id = 0x01; id <= 0x04; id++) {
+//    DM_Motor_Enable(id);
+//    HAL_Delay(10); // 顺次启动，防止冲击电流
+//  }
 
   HAL_TIM_Base_Start_IT(&htim3);
   HAL_TIM_Base_Start_IT(&htim4);
-  last_tick = HAL_GetTick();
+  loop_tick_5ms = HAL_GetTick();
   attitude_last_time = HAL_GetTick();
   HAL_Delay(1000);
   /* USER CODE END 2 */
@@ -360,12 +375,22 @@ int main(void)
   while (1)
   {
 	  uint32_t now = HAL_GetTick();
+	  Recover_Unitree_Uart_IfNeeded();
 
-	  	    if(now - last_tick >= 5)
+	  	    if(now - loop_tick_5ms >= 5)
 	  	    {
-	            float dt = (now - last_tick) / 1000.0f;
-	            last_tick = now;
-	            system_run_time += dt;
+	  	    	loop_tick_5ms=now;
+//	            uint32_t loop_dt_ms = now - loop_tick_5ms;
+//	            float dt = (now - loop_tick_5ms) / 1000.0f;
+//	            loop_tick_5ms += 5; // 【关键修改】：+=5 保证定时器稳定在 200Hz 不随系统耗时而漂移
+//	            system_run_time += dt;
+//	            g_robot_diag.loop_5ms_count++;
+//	            if (loop_dt_ms > g_robot_diag.max_loop_dt_ms) {
+//	                g_robot_diag.max_loop_dt_ms = loop_dt_ms;
+//	            }
+//	            if (loop_dt_ms > 6U) {
+//	                g_robot_diag.loop_overrun_count++;
+//	            }
 //	            //计算 PID
 //        	   for(int i = 0; i < 4; i++) {
 //			   float motor_angle=200.0f;
@@ -384,8 +409,9 @@ int main(void)
 //	            	  	        Motors[1].target_angle = (int64_t)(motor_angle * 19.0f * 8192.0f / 360.0f);
 //	            	  	      	PID_Calc_Position(1, Motors[1].target_angle);
 //        	   send_current();
-               Task_System_State_Update();  //姿态角
-               HAL_Delay(1);
+//               Task_System_State_Update();  //姿态角
+
+               // 【关键修改】：去除了原先的 HAL_Delay(1); 防止在 5ms 循环中浪费近 2ms 的等待时间
 
 //
 //	  	             //  1. 达妙控制
@@ -395,12 +421,13 @@ int main(void)
 //	  	    	DM_Send_Ctrl(0x02, 0.0f, 0.0f, 50.0f, 0.5f, 0.0f);
 //	  	    	DM_Send_Ctrl(0x03, 0.0f, 0.0f, 50.0f, 0.5f, 0.0f);
 //	  	    	DM_Send_Ctrl(0x04, 0.0f, 0.0f, 50.0f, 0.5f, 0.0f);
+//
+//	  	    	// 1. 调用正解函数
+//	  	    	run_arm_kinematics();
 
-	  	    	// 1. 调用正解函数
-	  	    	run_arm_kinematics();
-
-	            // 2.1 视觉任务状态机 (内部会按需调用 run_arm_to_pos)
-	            Task_Vision_State_Machine();
+//	            // 2.1 视觉任务状态机 (内部会按需调用 run_arm_to_pos)
+//	            Task_Vision_State_Machine();
+	            AS01_rx(&ctrl1, &ctrl2, &gait, startTime, angles, now);
 //	            // 2.2 遥控器控制
 //	  	    	arm_knob_direct_control();
 //
@@ -421,15 +448,6 @@ int main(void)
 
 
 	        }
-
-//
-//	  	  // 2. 低频运动学解算调度 (20ms 周期，完全非阻塞)
-//	  	  	      	  if(now - last_kinematics_tick >= 20)
-//	  	  	      	  {
-//	  	  	      	      last_kinematics_tick = now;
-//	  	  	      	      AS01_rx(&ctrl1,&ctrl2,&gait,startTime,angles,now);
-//
-//	  	  	      	  }
 
     /* USER CODE END WHILE */
 
@@ -518,10 +536,12 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     if (huart == &huart2) {
     	extract_data(&ctrl1.datas[ctrl1.last_sent_motor_id]); // 处理数据
+    	g_robot_diag.usart2_rx_count++;
     	ctrl1.dma_busy = 0;
     }
     if (huart == &huart3) {
     	extract_data(&ctrl2.datas[ctrl2.last_sent_motor_id]); // 处理数据
+    	g_robot_diag.usart3_rx_count++;
     	ctrl2.dma_busy = 0;
     }
 }
@@ -530,12 +550,20 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     if (huart== &huart3)
     {
         extern MotorController ctrl2; // 换成你实际的变量名
+        g_robot_diag.usart3_err_count++;
+        g_robot_diag.usart3_last_error = huart3.ErrorCode;
+        uart3_recover_pending = 1;
+        /* UART recovery is handled in the main loop. */
         ctrl2.dma_busy = 0;           // 强制解除锁定
 //        RS485_RxMode2();                   // 恢复接收模式
     }
     if (huart== &huart2)
     {
         extern MotorController ctrl1; // 换成你实际的变量名
+        g_robot_diag.usart2_err_count++;
+        g_robot_diag.usart2_last_error = huart2.ErrorCode;
+        uart2_recover_pending = 1;
+        /* UART recovery is handled in the main loop. */
         ctrl1.dma_busy = 0;           // 强制解除锁定
 //        RS485_RxMode1();                   // 恢复接收模式
     }
@@ -569,6 +597,35 @@ void MPU_Config(void)
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 
+}
+
+static void Recover_Unitree_Uart_IfNeeded(void)
+{
+    if (uart2_recover_pending) {
+        uart2_recover_pending = 0;
+        HAL_UART_Abort(&huart2);
+        HAL_UART_AbortReceive_IT(&huart2);
+        if (ctrl1.de_port != NULL) {
+            HAL_GPIO_WritePin(ctrl1.de_port, ctrl1.de_pin, GPIO_PIN_RESET);
+        }
+        HAL_UART_Receive_DMA(ctrl1.uart,
+                            (uint8_t*)&ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data,
+                             sizeof(ctrl1.datas[ctrl1.last_sent_motor_id].motor_recv_data));
+        ctrl1.dma_busy = 0;
+    }
+
+    if (uart3_recover_pending) {
+        uart3_recover_pending = 0;
+        HAL_UART_Abort(&huart3);
+        HAL_UART_AbortReceive_IT(&huart3);
+        if (ctrl2.de_port != NULL) {
+            HAL_GPIO_WritePin(ctrl2.de_port, ctrl2.de_pin, GPIO_PIN_RESET);
+        }
+        HAL_UART_Receive_DMA(ctrl2.uart,
+                            (uint8_t*)&ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data,
+                             sizeof(ctrl2.datas[ctrl2.last_sent_motor_id].motor_recv_data));
+        ctrl2.dma_busy = 0;
+    }
 }
 
 /**

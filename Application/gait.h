@@ -132,7 +132,6 @@
 #include <math.h>
 #include "kinematics.h"
 
-//#define PI 3.14159265358979323846f
 
 typedef struct {
     float x;

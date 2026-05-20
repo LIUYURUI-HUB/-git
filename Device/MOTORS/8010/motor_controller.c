@@ -16,6 +16,9 @@ void MotorController_Init(MotorController* ctrl,
     ctrl->uart = uart;
     ctrl->de_port = de_port;
     ctrl->de_pin = de_pin;
+    ctrl->dma_busy = 0;
+    ctrl->last_sent_motor_id = 0;
+    ctrl->last_send_tick = 0;
 
 
     // 初始化所有电机指令
@@ -88,6 +91,7 @@ int MotorController_SendCommand1(MotorController* ctrl, uint8_t motor_id) {
 
     // 标记DMA忙碌状态
     ctrl->dma_busy = 1;
+    ctrl->last_send_tick = HAL_GetTick();
 
     // 启动DMA发送
     HAL_StatusTypeDef status = HAL_UART_Transmit_DMA(
@@ -151,6 +155,7 @@ int MotorController_SendCommand2(MotorController* ctrl, uint8_t motor_id) {
 
     // 标记DMA忙碌状态
     ctrl->dma_busy = 1;
+    ctrl->last_send_tick = HAL_GetTick();
 
     // 启动DMA发送
     HAL_StatusTypeDef status = HAL_UART_Transmit_DMA(

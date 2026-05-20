@@ -1,3 +1,9 @@
+// LEGACY / DISABLED:
+// This file is intentionally kept as historical reference only.
+// The active leg/chassis control path is:
+//   main.c -> AS01_rx() -> joystick_control() -> Application/control.c
+// Do not re-enable this file without first reconciling its state machine with control.c.
+
 ///*
 // * leg_task.c
 // *
@@ -188,10 +194,10 @@
 //        }
 //        else {
 //            // 行走时的连续姿态补偿
-//            angles = get_leg_angles(gait, 0, currentTimeSec, ctrl2, 7, 8, 0.2, 0.1, leg_y_offsets[0]);
-//            angles = get_leg_angles(gait, 2, currentTimeSec, ctrl1, 6, 5, 0.2, 0.1, leg_y_offsets[2]);
-//            angles = get_leg_angles(gait, 1, currentTimeSec, ctrl2, 1, 2, 0.2, 0.1, leg_y_offsets[1]);
-//            angles = get_leg_angles(gait, 3, currentTimeSec, ctrl1, 3, 4, 0.2, 0.1, leg_y_offsets[3]);
+//            angles = get_leg_angles(gait, 0, currentTimeSec, ctrl2, 7, 8, 0.2, 0.1);
+//            angles = get_leg_angles(gait, 2, currentTimeSec, ctrl1, 6, 5, 0.2, 0.1);
+//            angles = get_leg_angles(gait, 1, currentTimeSec, ctrl2, 1, 2, 0.2, 0.1);
+//            angles = get_leg_angles(gait, 3, currentTimeSec, ctrl1, 3, 4, 0.2, 0.1);
 //        }
 //    }
 //}

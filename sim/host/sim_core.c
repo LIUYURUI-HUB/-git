@@ -299,3 +299,42 @@ SIM_EXPORT void sim_get_snapshot(SimSnapshot_t* out)
         out->motor_cmd[i] = motor_cmds[i].p_des;
     }
 }
+
+SIM_EXPORT void sim_get_chassis_move(Chassis_Move_t* out)
+{
+    if (out == NULL) {
+        return;
+    }
+
+    *out = Protocol_GetChassisMove();
+}
+
+SIM_EXPORT uint8_t sim_is_new_chassis_data(void)
+{
+    return Protocol_IsNewChassisData() ? 1U : 0U;
+}
+
+SIM_EXPORT void sim_clear_chassis_data_flag(void)
+{
+    Protocol_ClearChassisDataFlag();
+}
+
+SIM_EXPORT uint8_t sim_get_gait_switch(void)
+{
+    return Protocol_GetGaitSwitch();
+}
+
+SIM_EXPORT uint8_t sim_is_new_gait_data(void)
+{
+    return Protocol_IsNewGaitData() ? 1U : 0U;
+}
+
+SIM_EXPORT void sim_clear_gait_data_flag(void)
+{
+    Protocol_ClearGaitDataFlag();
+}
+
+SIM_EXPORT uint8_t sim_is_chassis_timeout(void)
+{
+    return Protocol_IsChassisTimeout() ? 1U : 0U;
+}

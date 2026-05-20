@@ -5,6 +5,17 @@
 extern FDCAN_HandleTypeDef hfdcan1; // STM32H7
 extern FDCAN_HandleTypeDef hfdcan3;
 
+void Clear_Motor_PID(int motor_id) {
+    Motors[motor_id].speed_err_sum = 0.0f;
+    Motors[motor_id].position_err_sum = 0.0f;
+    Motors[motor_id].torque_err_sum = 0.0f;
+    Motors[motor_id].err_last = 0.0f;
+
+    Motors[motor_id].target_speed = 0.0f;
+    Motors[motor_id].target_angle = Motors[motor_id].total_angle;
+    Motors[motor_id].Out_Current = 0;
+}
+
 // 全局变量定义
 Motor_3508_T Motors[4];
 

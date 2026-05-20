@@ -57,6 +57,7 @@ void D3508_Init(void);
 void send_current(void);
 
 //PID计算
+void Clear_Motor_PID(int motor_id);
 void PID_Calc_Speed(int i);
 void PID_Calc_Position(int i, float target_angle);
 
