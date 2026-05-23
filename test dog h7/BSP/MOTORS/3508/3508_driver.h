@@ -4,6 +4,15 @@
 
 #include "main.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846f
+#endif
+
+#define D3508_REDUCTION_RATIO    19.0f
+#define D3508_ENCODER_RES        8192.0f
+#define D3508_RAD_PER_TICK       (2.0f * M_PI / (D3508_ENCODER_RES * D3508_REDUCTION_RATIO))
+#define D3508_RPM_TO_WHEEL_RADPS (2.0f * M_PI / (60.0f * D3508_REDUCTION_RATIO))
+
 // 1. 电机数据结构体
 typedef struct {
     // 反馈数据
@@ -59,6 +68,8 @@ void send_current(void);
 //PID计算
 void PID_Calc_Speed(int i);
 void PID_Calc_Position(int i, float target_angle);
+void PID_Calc_Torque(int i, float target_torque);
+void MIT_Wheel_Control(int i, int64_t P_des, float V_des, float kp, float kd, float t_ff_wheel, float max_wheel_torque);
 void Clear_Motor_PID(int motor_id) ;
 //拆解接收数据
 void D3508_Decode(uint8_t* RxData, uint16_t ID);

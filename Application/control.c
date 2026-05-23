@@ -28,6 +28,12 @@ static Currentpos pose_start_pos[4];                // 微调的起点
 static Currentpos pose_target_pos[4];               // 微调的终点
 static const uint32_t POSE_ADJUST_DURATION_MS = 500; // 微调耗时 (300ms)，让动作迅捷且平滑
 static int64_t locked_angle[4] = {0}; // 记录锁死时的目标编码器角度
+static const float CHASSIS_WHEEL_KD_SPEED = 0.2f;
+static const float CHASSIS_WHEEL_KP_LOCK = 5.0f;
+static const float CHASSIS_WHEEL_KD_LOCK = 0.2f;
+static const float CHASSIS_WHEEL_TFF_NM = 0.0f;
+static const float CHASSIS_WHEEL_MAX_TORQUE_SPEED = 1.0f;
+static const float CHASSIS_WHEEL_MAX_TORQUE_LOCK = 1.5f;
 static inline void apply_current_gait(QuadrupedGait* gait) {
     float straight_period = 1.2f; // 周期 (秒)
     float straight_length = 8.5f; // 步长
@@ -319,8 +325,7 @@ void joystick_control(MotorController* ctrl1, MotorController* ctrl2, QuadrupedG
 
                 // 单次动作时保持 3508 轮子停止
                 for (int i = 0; i < 4; i++) {
-                    Motors[i].target_speed = 0.0f;
-                    PID_Calc_Speed(i);
+                    MIT_Wheel_Control(i, Motors[i].total_angle, 0.0f, 0.0f, CHASSIS_WHEEL_KD_SPEED, CHASSIS_WHEEL_TFF_NM, CHASSIS_WHEEL_MAX_TORQUE_SPEED);
                 }
             }
         }
@@ -430,12 +435,10 @@ void joystick_control(MotorController* ctrl1, MotorController* ctrl2, QuadrupedG
                 }
 
                 for (int i = 0; i < 2; i++) {
-                    Motors[i].target_speed = wheel_target_rpm_01;
-                    PID_Calc_Speed(i);
+                    MIT_Wheel_Control(i, Motors[i].total_angle, wheel_target_rpm_01, 0.0f, CHASSIS_WHEEL_KD_SPEED, CHASSIS_WHEEL_TFF_NM, CHASSIS_WHEEL_MAX_TORQUE_SPEED);
                 }
                 for (int i = 2; i < 4; i++) {
-                    Motors[i].target_speed = wheel_target_rpm_23;
-                    PID_Calc_Speed(i);
+                    MIT_Wheel_Control(i, Motors[i].total_angle, wheel_target_rpm_23, 0.0f, CHASSIS_WHEEL_KD_SPEED, CHASSIS_WHEEL_TFF_NM, CHASSIS_WHEEL_MAX_TORQUE_SPEED);
                 }
 
             } else {
@@ -447,8 +450,7 @@ void joystick_control(MotorController* ctrl1, MotorController* ctrl2, QuadrupedG
 
                             // 【修改】在 5ms 周期里持续计算位置环，抵抗外力
                             for (int i = 0; i < 4; i++) {
-                                Motors[i].target_angle = locked_angle[i];
-                                PID_Calc_Position(i, Motors[i].target_angle);
+                                MIT_Wheel_Control(i, locked_angle[i], 0.0f, CHASSIS_WHEEL_KP_LOCK, CHASSIS_WHEEL_KD_LOCK, 0.0f, CHASSIS_WHEEL_MAX_TORQUE_LOCK);
                             }
                         }
         }

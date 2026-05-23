@@ -277,6 +277,36 @@ void PID_Calc_Torque(int i, float target_torque)
 }
 
 // 6.功率限制
+void MIT_Wheel_Control(int i, int64_t P_des, float V_des, float kp, float kd, float t_ff_wheel, float max_wheel_torque)
+{
+    if (i < 0 || i >= 4) return;
+    Motor_3508_T* m = &Motors[i];
+
+    m->target_angle = P_des;
+    m->target_speed = V_des;
+    m->speed_err_sum = 0.0f;
+    m->position_err_sum = 0.0f;
+
+    if (max_wheel_torque <= 0.0f) {
+        m->torque_err_sum = 0.0f;
+        m->Out_Current = 0;
+        return;
+    }
+
+    float P = (float)m->total_angle * D3508_RAD_PER_TICK;
+    float P_target = (float)P_des * D3508_RAD_PER_TICK;
+    float V = m->filter_speed * D3508_RPM_TO_WHEEL_RADPS;
+    float V_target = V_des * D3508_RPM_TO_WHEEL_RADPS;
+
+    float target_wheel_torque = kp * (P_target - P) + kd * (V_target - V) + t_ff_wheel;
+
+    if (target_wheel_torque > max_wheel_torque) target_wheel_torque = max_wheel_torque;
+    if (target_wheel_torque < -max_wheel_torque) target_wheel_torque = -max_wheel_torque;
+
+    float target_motor_torque = target_wheel_torque / D3508_REDUCTION_RATIO;
+    PID_Calc_Torque(i, target_motor_torque);
+}
+
 int16_t Power_Limit(float desire_current, float rpm){
 
 	// 计算角速度
