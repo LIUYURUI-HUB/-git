@@ -192,7 +192,7 @@ void Task_Vision_State_Machine(void)
 {
     uint32_t current_tick = HAL_GetTick();
 
-    if (current_tick - last_feedback_time >= 20) {
+    if (0 && current_tick - last_feedback_time >= 20) {
         Protocol_SendArmPositionFeedback(end_effector_pos.x, end_effector_pos.y, end_effector_pos.z);
         last_feedback_time = current_tick;
     }

@@ -2,7 +2,7 @@
 #include <string.h>
 
 // 引用 fdcan.c 中定义的硬件句柄
-extern FDCAN_HandleTypeDef hfdcan2;
+extern FDCAN_HandleTypeDef hfdcan3;
 
 DM_Motor_t Arm_Motors[4];
 
@@ -41,7 +41,7 @@ static float uint_to_float(int x_int, float x_min, float x_max, int bits) {
 }
 
 //初始化can通信
-void FDCAN2_Filter_Init(void)
+void FDCAN3_Filter_Init(void)
 {
     FDCAN_FilterTypeDef fdcan_filter;
 
@@ -52,25 +52,25 @@ void FDCAN2_Filter_Init(void)
     fdcan_filter.FilterID1 = 0x000;     //
     fdcan_filter.FilterID2 = 0x000;     // 全0掩码 （接收所有标准ID）
 
-    if(HAL_FDCAN_ConfigFilter(&hfdcan2, &fdcan_filter) != HAL_OK)
+    if(HAL_FDCAN_ConfigFilter(&hfdcan3, &fdcan_filter) != HAL_OK)
     {
         Error_Handler();
     }
 
     // 全局过滤配置
-    if(HAL_FDCAN_ConfigGlobalFilter(&hfdcan2,FDCAN_ACCEPT_IN_RX_FIFO0,FDCAN_REJECT,FDCAN_REJECT_REMOTE,FDCAN_REJECT_REMOTE) != HAL_OK)
+    if(HAL_FDCAN_ConfigGlobalFilter(&hfdcan3,FDCAN_ACCEPT_IN_RX_FIFO0,FDCAN_REJECT,FDCAN_REJECT_REMOTE,FDCAN_REJECT_REMOTE) != HAL_OK)
     {
         Error_Handler();
     }
 
     // 启动CAN硬件（使能通信）
-    if(HAL_FDCAN_Start(&hfdcan2) != HAL_OK)
+    if(HAL_FDCAN_Start(&hfdcan3) != HAL_OK)
     {
         Error_Handler();
     }
 
     // 激活中断（实现异步通信）
-    if(HAL_FDCAN_ActivateNotification(&hfdcan2,FDCAN_IT_RX_FIFO0_NEW_MESSAGE |  // 接收can反馈
+    if(HAL_FDCAN_ActivateNotification(&hfdcan3,FDCAN_IT_RX_FIFO0_NEW_MESSAGE |  // 接收can反馈
             FDCAN_IT_ERROR_WARNING |        // 基本错误检测
             FDCAN_IT_BUS_OFF,               // 总线错误恢复
             0) != HAL_OK)
@@ -108,7 +108,7 @@ void DM_Motor_Enable(uint16_t id)
     pTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     pTxHeader.MessageMarker = 0;
 
-    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &pTxHeader, TxData);
+    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &pTxHeader, TxData);
 }
 
 // 失能电机
@@ -127,7 +127,7 @@ void DM_Motor_Disable(uint16_t id)
     pTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     pTxHeader.MessageMarker = 0;
 
-    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &pTxHeader, TxData);
+    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &pTxHeader, TxData);
 }
 
 // 设置当前物理位置为电机零点 (每次上电执行)
@@ -146,7 +146,7 @@ void DM_Set_Zero_Pos(uint16_t id)
     pTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     pTxHeader.MessageMarker = 0;
 
-    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &pTxHeader, TxData);
+    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &pTxHeader, TxData);
 }
 
 /**
@@ -190,7 +190,7 @@ uint8_t DM_Send_Ctrl(uint16_t id,float p_des,float v_des,float Kp,float Kd,float
 
     // 等待发送邮箱空位
     uint32_t timeout_count = 0;
-    while(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan2) == 0)
+    while(HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan3) == 0)
     {
         timeout_count++;
         if(timeout_count > 50000)
@@ -200,7 +200,7 @@ uint8_t DM_Send_Ctrl(uint16_t id,float p_des,float v_des,float Kp,float Kd,float
     }
 
     // 调用HAL库发送函数
-    if(HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &pTxHeader, TxData) != HAL_OK)
+    if(HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &pTxHeader, TxData) != HAL_OK)
     {
         return 1; // 发送失败
     }

@@ -5,7 +5,7 @@
 
 #include "AS01.h"
 
-extern SPI_HandleTypeDef hspi3;
+extern SPI_HandleTypeDef hspi1;
 
 // 接收地址
 const uint8_t RX_ADDRESS[5] = {0x34, 0x43, 0x10, 0x10, 0x01}; // 任务赛
@@ -14,6 +14,19 @@ const uint8_t RX_ADDRESS[5] = {0x34, 0x43, 0x10, 0x10, 0x01}; // 任务赛
 // 调试专用变量：在 STM32CubeIDE 的 Live Expressions 中添加此变量
 // 用来观察读回的数据到底是什么，以判断底层硬件故障原因
 uint8_t g_NRF_Read_Debug[5] = {0};
+volatile uint8_t g_NRF_CheckSpiResult = 0xFF;
+volatile uint8_t g_NRF_InitCalled = 0;
+volatile uint8_t g_NRF_LastRxStatus = 0;
+volatile uint8_t g_NRF_LastRxOk = 0;
+volatile uint8_t g_NRF_RegConfig = 0;
+volatile uint8_t g_NRF_RegEnAa = 0;
+volatile uint8_t g_NRF_RegEnRxAddr = 0;
+volatile uint8_t g_NRF_RegRfCh = 0;
+volatile uint8_t g_NRF_RegRfSetup = 0;
+volatile uint8_t g_NRF_RegRxPwP0 = 0;
+volatile uint8_t g_NRF_RegFifoStatus = 0;
+volatile uint8_t g_NRF_CePinState = 0;
+volatile uint8_t g_NRF_RxAddrP0_Debug[5] = {0};
 // ==========================================================
 
 /**
@@ -48,12 +61,12 @@ static uint8_t SPI2_ReadWriteByte(uint8_t byte) {
 
     // H7 特有坑：如果 SPI 发生 Overrun (溢出) 错误，会导致后续读写永远返回 0xFF 或卡死
     // 每次通信前检查并清除标志位
-    if (__HAL_SPI_GET_FLAG(&hspi3, SPI_FLAG_OVR)) {
-        __HAL_SPI_CLEAR_OVRFLAG(&hspi3);
+    if (__HAL_SPI_GET_FLAG(&hspi1, SPI_FLAG_OVR)) {
+        __HAL_SPI_CLEAR_OVRFLAG(&hspi1);
     }
 
     // 使用阻塞式传输，设置合理的 10ms 超时
-    if(HAL_SPI_TransmitReceive(&hspi3, &byte, &d_read, 1, 10) != HAL_OK) {
+    if(HAL_SPI_TransmitReceive(&hspi1, &byte, &d_read, 1, 10) != HAL_OK) {
         return 0xFF;
     }
     return d_read;
@@ -97,6 +110,18 @@ void NRF_Read_Buf(uint8_t reg, uint8_t *pBuf, uint8_t len) {
     NRF_CSN_HIGH_SAFE();
 }
 
+static void NRF24L01_UpdateDebugRegs(void) {
+    g_NRF_RegConfig = NRF_Read_Reg(CONFIG);
+    g_NRF_RegEnAa = NRF_Read_Reg(EN_AA);
+    g_NRF_RegEnRxAddr = NRF_Read_Reg(EN_RXADDR);
+    g_NRF_RegRfCh = NRF_Read_Reg(RF_CH);
+    g_NRF_RegRfSetup = NRF_Read_Reg(RF_SETUP);
+    g_NRF_RegRxPwP0 = NRF_Read_Reg(RX_PW_P0);
+    g_NRF_RegFifoStatus = NRF_Read_Reg(FIFO_STATUS);
+    g_NRF_CePinState = (HAL_GPIO_ReadPin(NRF_CE_GPIO_PORT, NRF_CE_PIN) == GPIO_PIN_SET) ? 1U : 0U;
+    NRF_Read_Buf(RX_ADDR_P0, (uint8_t*)g_NRF_RxAddrP0_Debug, 5);
+}
+
 /**
  * @brief 物理层自检改进版
  * NRF24L01 的 TX_ADDR 寄存器是可以读写的，用它来测试 SPI 是否通畅最有效
@@ -124,9 +149,12 @@ uint8_t NRF24L01_Check_SPI(void) {
     // 3. 逐位对比
     for(int i=0; i<5; i++) {
         if(read_addr[i] != test_addr[i]) {
+            g_NRF_CheckSpiResult = 1;
             return 1; // 失败
         }
     }
+    g_NRF_CheckSpiResult = 0;
+    NRF24L01_UpdateDebugRegs();
     return 0; // 成功
 }
 
@@ -161,13 +189,15 @@ uint8_t NRF24L01_Check(void) {
 
 void NRF24L01_Init(void) {
     NRF_CE_LOW();
+    g_NRF_InitCalled = 1;
 
     // 基础配置
     NRF_Write_Buf(0x20|RX_ADDR_P0, (uint8_t*)RX_ADDRESS, 5);
     NRF_Write_Reg(EN_AA, 0x01);
     NRF_Write_Reg(EN_RXADDR, 0x01);
+    NRF_Write_Reg(SETUP_RETR, 0x1A);
     NRF_Write_Reg(RF_CH, 40);
-    NRF_Write_Reg(RX_PW_P0, 32);
+    NRF_Write_Reg(RX_PW_P0, sizeof(RemoteData_t));
 
     // 重点：RF_SETUP 速率
     // 0x26 表示 250kbps, 0dBm (信号最强)
@@ -186,6 +216,7 @@ void NRF24L01_Init(void) {
 
     NRF_CE_HIGH();
     HAL_Delay(10); // 等待稳定
+    NRF24L01_UpdateDebugRegs();
 }
 
 /**
@@ -195,14 +226,18 @@ void NRF24L01_Init(void) {
  */
 uint8_t NRF24L01_RxPacket(uint8_t *rxbuf) {
     uint8_t status = NRF_Read_Reg(STATUS);
+    g_NRF_LastRxStatus = status;
+    g_NRF_LastRxOk = (status & RX_OK) ? 1U : 0U;
+    g_NRF_RegFifoStatus = NRF_Read_Reg(FIFO_STATUS);
+    g_NRF_CePinState = (HAL_GPIO_ReadPin(NRF_CE_GPIO_PORT, NRF_CE_PIN) == GPIO_PIN_SET) ? 1U : 0U;
     
     // 检查是否有接收数据就绪标志 (RX_OK 通常是 0x40)
-    if (status & 0x40) {
+    if (status & RX_OK) {
         // 读取接收到的数据 (0x61 = RD_RX_PLOAD)
-        NRF_Read_Buf(0x61, rxbuf, 32);
+        NRF_Read_Buf(0x61, rxbuf, sizeof(RemoteData_t));
         
         // 清除接收数据就绪标志
-        NRF_Write_Reg(STATUS, status | 0x40);
+        NRF_Write_Reg(STATUS, status | RX_OK);
         
         // 清空接收缓冲区
         NRF_CSN_LOW_SAFE();

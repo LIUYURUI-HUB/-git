@@ -47,8 +47,10 @@ void Error_Handler(void);
 #define BMI088_INT3_EXTI_IRQn EXTI15_10_IRQn
 #define VALVE_CHASSIS_2_Pin GPIO_PIN_13
 #define VALVE_CHASSIS_2_GPIO_Port GPIOE
-#define VALVE_CHASSIS_1_Pin GPIO_PIN_14
-#define VALVE_CHASSIS_1_GPIO_Port GPIOE
+#define CSN_Pin GPIO_PIN_14
+#define CSN_GPIO_Port GPIOE
+#define CE_Pin GPIO_PIN_15
+#define CE_GPIO_Port GPIOE
 #define RS485_REDE2_Pin GPIO_PIN_14
 #define RS485_REDE2_GPIO_Port GPIOB
 #define PUMP_CHASSIS_Pin GPIO_PIN_14
@@ -57,10 +59,6 @@ void Error_Handler(void);
 #define PUMP_ARM_GPIO_Port GPIOD
 #define RS485_REDE1_Pin GPIO_PIN_4
 #define RS485_REDE1_GPIO_Port GPIOD
-#define CE_Pin GPIO_PIN_0
-#define CE_GPIO_Port GPIOE
-#define CSN_Pin GPIO_PIN_1
-#define CSN_GPIO_Port GPIOE
 
 /* USER CODE BEGIN Private defines */
 /* USER CODE END Private defines */

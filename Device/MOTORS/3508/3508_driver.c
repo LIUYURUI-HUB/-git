@@ -1,9 +1,21 @@
 #include "3508_driver.h"
 #include <string.h>
+#include <math.h>
 #include "main.h"
 
 extern FDCAN_HandleTypeDef hfdcan1; // STM32H7
-extern FDCAN_HandleTypeDef hfdcan3;
+extern FDCAN_HandleTypeDef hfdcan2;
+
+void Clear_Motor_PID(int motor_id) {
+    Motors[motor_id].speed_err_sum = 0.0f;
+    Motors[motor_id].position_err_sum = 0.0f;
+    Motors[motor_id].torque_err_sum = 0.0f;
+    Motors[motor_id].err_last = 0.0f;
+
+    Motors[motor_id].target_speed = 0.0f;
+    Motors[motor_id].target_angle = Motors[motor_id].total_angle;
+    Motors[motor_id].Out_Current = 0;
+}
 
 // 全局变量定义
 Motor_3508_T Motors[4];
@@ -42,7 +54,6 @@ PID_3508_T Torque_PID = {
 // EMA 滤波系数
 #define D3508_EMA_ALPHA 0.3f
 static const float Ts = 0.005f;
-
 int16_t Power_Limit(float desire_current, float rpm);
 
 // 1.CAN配置
@@ -71,14 +82,14 @@ void FDCAN1_Filter_Init(void) {
 }
 
 
-void FDCAN3_Filter_Init(void) {
+void FDCAN2_Filter_Init(void) {
 
     // STM32H7 Code (FDCAN)
     FDCAN_FilterTypeDef sFilterConfig;
 
     // 配置全局过滤器
     // 参数：句柄, 未匹配标准帧处理, 未匹配扩展帧处理, 拒绝远程标准帧, 拒绝远程扩展帧
-    HAL_FDCAN_ConfigGlobalFilter(&hfdcan3, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE);
+    HAL_FDCAN_ConfigGlobalFilter(&hfdcan2, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE);
 
     // 也可以配置一个具体的过滤器 (虽然有全局配置其实可以不用)
     sFilterConfig.IdType = FDCAN_STANDARD_ID;
@@ -88,11 +99,11 @@ void FDCAN3_Filter_Init(void) {
     sFilterConfig.FilterID1 = 0x200;//基准ID
     sFilterConfig.FilterID2 = 0x7F0;//掩码
 
-    if (HAL_FDCAN_ConfigFilter(&hfdcan3, &sFilterConfig) != HAL_OK) Error_Handler();
-    if (HAL_FDCAN_Start(&hfdcan3) != HAL_OK) Error_Handler();
+    if (HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilterConfig) != HAL_OK) Error_Handler();
+    if (HAL_FDCAN_Start(&hfdcan2) != HAL_OK) Error_Handler();
 
     // 开启“新消息”中断
-    if (HAL_FDCAN_ActivateNotification(&hfdcan3, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) Error_Handler();
+    if (HAL_FDCAN_ActivateNotification(&hfdcan2, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0) != HAL_OK) Error_Handler();
 }
 
 // 2.初始化电机数据
@@ -145,7 +156,7 @@ void D3508_Init(void) {
 void send_current(void) {
     FDCAN_TxHeaderTypeDef TxHeader;
     uint8_t TxData1[8] = {0}; // 给 FDCAN1 (放电机1、2)
-    uint8_t TxData3[8] = {0}; // 给 FDCAN3 (放电机3、4)
+    uint8_t TxData3[8] = {0}; // 给 FDCAN2 (放电机3、4)
 
     TxHeader.Identifier = 0x200;
     TxHeader.IdType = FDCAN_STANDARD_ID;
@@ -164,13 +175,13 @@ void send_current(void) {
     TxData1[3] = Motors[1].Out_Current;
     HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData1);
 
-    // FDCAN3 只发电机 3 和 4
+    // FDCAN2 只发电机 3 和 4
     // 【注意】大疆电调 ID 3,4 固定读取 4~7 字节，不能把它们放在 0~3 字节！
     TxData3[4] = Motors[2].Out_Current >> 8;
     TxData3[5] = Motors[2].Out_Current;
     TxData3[6] = Motors[3].Out_Current >> 8;
     TxData3[7] = Motors[3].Out_Current;
-    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan3, &TxHeader, TxData3);
+    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &TxHeader, TxData3);
 }
 
 // 4.速度环PID 计算
@@ -255,6 +266,9 @@ void PID_Calc_Torque(int i, float target_torque)
     // 1. 前馈控制：将目标力矩(Nm)直接转化为期望电流发送值(-16384~16384)
     // 公式：电流(A) = 力矩 / Kt；发送值 = 电流(A) * Int_Current
     float target_current_val = (target_torque / Kt) * Int_Current;
+    m->torque_err_sum = 0.0f;
+    m->Out_Current = Power_Limit(target_current_val, m->filter_speed);
+    return;
 
     // 2. 闭环补偿：计算实际电流与期望电流的误差
     float error = target_current_val - m->actual_current;
@@ -275,7 +289,7 @@ void PID_Calc_Torque(int i, float target_torque)
     m->Out_Current = Power_Limit(output, m->filter_speed);
 }
 
-// 6.功率限制
+// 轮腿底盘MIT阻抗控制：轮端位置/速度误差 -> 轮端力矩 -> 电机端力矩 -> C620电流
 void MIT_Wheel_Control(int i, int64_t P_des, float V_des, float kp, float kd, float t_ff_wheel, float max_wheel_torque)
 {
     if (i < 0 || i >= 4) return;
@@ -292,12 +306,13 @@ void MIT_Wheel_Control(int i, int64_t P_des, float V_des, float kp, float kd, fl
         return;
     }
 
-    float P = (float)m->total_angle * D3508_RAD_PER_TICK;
-    float P_target = (float)P_des * D3508_RAD_PER_TICK;
-    float V = m->filter_speed * D3508_RPM_TO_WHEEL_RADPS;
-    float V_target = V_des * D3508_RPM_TO_WHEEL_RADPS;
+    float q_des = (float)P_des * D3508_RAD_PER_TICK;
+    float q = (float)m->total_angle * D3508_RAD_PER_TICK;
 
-    float target_wheel_torque = kp * (P_target - P) + kd * (V_target - V) + t_ff_wheel;
+    float dq_des = V_des * D3508_RPM_TO_WHEEL_RADPS;
+    float dq = m->filter_speed * D3508_RPM_TO_WHEEL_RADPS;
+
+    float target_wheel_torque = kp * (q_des - q) + kd * (dq_des - dq) + t_ff_wheel;
 
     if (target_wheel_torque > max_wheel_torque) target_wheel_torque = max_wheel_torque;
     if (target_wheel_torque < -max_wheel_torque) target_wheel_torque = -max_wheel_torque;
@@ -306,6 +321,7 @@ void MIT_Wheel_Control(int i, int64_t P_des, float V_des, float kp, float kd, fl
     PID_Calc_Torque(i, target_motor_torque);
 }
 
+// 6.功率限制
 int16_t Power_Limit(float desire_current, float rpm){
 
 	// 计算角速度

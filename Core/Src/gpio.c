@@ -19,6 +19,7 @@
         * Output
         * EVENT_OUT
         * EXTI
+     PC12   ------> SPI3_MOSI
 */
 void MX_GPIO_Init(void)
 {
@@ -37,13 +38,13 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOC, ACC_CS_Pin|GYRO_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, VALVE_CHASSIS_2_Pin|VALVE_CHASSIS_1_Pin|CE_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, PUMP_CHASSIS_Pin|PUMP_ARM_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, VALVE_CHASSIS_2_Pin|CE_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(CSN_GPIO_Port, CSN_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, PUMP_CHASSIS_Pin|PUMP_ARM_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : ACC_CS_Pin GYRO_CS_Pin */
   GPIO_InitStruct.Pin = ACC_CS_Pin|GYRO_CS_Pin;
@@ -58,19 +59,19 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : VALVE_CHASSIS_2_Pin VALVE_CHASSIS_1_Pin */
-  GPIO_InitStruct.Pin = VALVE_CHASSIS_2_Pin|VALVE_CHASSIS_1_Pin;
+  /*Configure GPIO pin : VALVE_CHASSIS_2_Pin */
+  GPIO_InitStruct.Pin = VALVE_CHASSIS_2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+  HAL_GPIO_Init(VALVE_CHASSIS_2_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PUMP_CHASSIS_Pin PUMP_ARM_Pin */
-  GPIO_InitStruct.Pin = PUMP_CHASSIS_Pin|PUMP_ARM_Pin;
+  /*Configure GPIO pin : CSN_Pin */
+  GPIO_InitStruct.Pin = CSN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(CSN_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : CE_Pin */
   GPIO_InitStruct.Pin = CE_Pin;
@@ -79,12 +80,20 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(CE_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : CSN_Pin */
-  GPIO_InitStruct.Pin = CSN_Pin;
+  /*Configure GPIO pins : PUMP_CHASSIS_Pin PUMP_ARM_Pin */
+  GPIO_InitStruct.Pin = PUMP_CHASSIS_Pin|PUMP_ARM_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PC12 */
+  GPIO_InitStruct.Pin = GPIO_PIN_12;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
-  HAL_GPIO_Init(CSN_GPIO_Port, &GPIO_InitStruct);
+  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*AnalogSwitch Config */
   HAL_SYSCFG_AnalogSwitchConfig(SYSCFG_SWITCH_PC3, SYSCFG_SWITCH_PC3_CLOSE);
